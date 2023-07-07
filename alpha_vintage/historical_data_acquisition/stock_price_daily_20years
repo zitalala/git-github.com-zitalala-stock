@@ -1,0 +1,100 @@
+import pymysql
+import requests
+import time
+import pickle
+import threading
+
+# connect to mysql database
+conn = pymysql.connect(host="192.168.100.11", port=3306, user="root", passwd="zitabaobao", db="stock")
+# create a cursor object
+cur = conn.cursor()
+
+try:
+  with open ('/root/Workspace/stock/alpha_vintage/pickle_files/stock_daily.pkl','rb') as f:
+    fetched_tickers = pickle.load(f)
+except FileNotFoundError:
+  fetched_tickers = []
+
+# 获取所有美股清单
+# next_url = 'https://api.polygon.io/v3/reference/tickers?type=CS&market=stocks&active=true&limit=1000&sort=ticker'
+next_url = 'https://api.polygon.io/v3/reference/tickers?cursor=YWN0aXZlPXRydWUmYXA9Q0VMTCU3Q2FkNjc3NjQ0Nzg2ODIxYzI1OGQwYmE3M2VjMDc1OTMzNjk4NGViN2FlNTdiMGNmZmMzNjJmZTJkMWYzNjZjNTkmYXM9JmRhdGU9MjAyMy0wNy0wNyZsaW1pdD0xMDAwJm1hcmtldD1zdG9ja3Mmb3JkZXI9YXNjJnNvcnQ9dGlja2VyJnR5cGU9Q1M'
+api_key = '&apiKey=_5CJK9B6AFfRP5cjw9JA70Yq7ougOpeP'
+url = next_url+api_key
+r = requests.get(url)
+pre_data = r.json()
+
+for v in pre_data['results']:
+    ticker = v['ticker']
+    
+    # check if the ticker already in the plk file
+    if ticker in fetched_tickers:
+      continue
+    else:
+      # get stock details
+      url = 'https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol='+str(ticker)+'&outputsize=full&apikey=BY37X94KMPNTQAO8'
+      r = requests.get(url)
+      data = r.json()
+      print('ticker', ticker)
+      # api limited to 5 times every minute
+      time.sleep(13)
+      try:
+        stock_data = data['Time Series (Daily)']
+      except KeyError:
+        continue
+      
+      for key, value in stock_data.items():
+          dates = key
+          opens = float(value['1. open'])
+          high = float(value['2. high'])
+          low = float(value['3. low'])
+          closes = float(value['4. close'])
+          adjusted_close = float(value['5. adjusted close'])
+          volume = int(value['6. volume'])
+          dividend_amount = float(value['7. dividend amount'])
+          split_coefficient = float(value['8. split coefficient'])
+          
+          sql = """
+          INSERT INTO stock_price_daily (
+              dates,
+              ticker,
+              opens,
+              high,
+              low,
+              closes,
+              adjusted_close,
+              volume,
+              dividend_amount,
+              split_coefficient
+            )
+          VALUES (
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s,
+              %s
+            );
+          """
+          
+          cur.execute(sql, (dates, ticker, opens, high, low, closes, adjusted_close, volume, dividend_amount, split_coefficient))
+
+      #commit
+      conn.commit()
+      
+      # save and dump new ticker into the plk file
+      fetched_tickers.append(ticker)
+      with open ('/root/Workspace/stock/alpha_vintage/pickle_files/stock_daily.pkl','wb') as f:
+        pickle.dump(fetched_tickers, f)
+
+#close cur
+cur.close()
+conn.close()
+    
+    
+    
+    
+    
